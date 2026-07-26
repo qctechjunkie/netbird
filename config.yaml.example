@@ -1,0 +1,87 @@
+## NetBird Combined Server Configuration
+## Reference: https://github.com/netbirdio/netbird/blob/main/combined/config.yaml.example
+##
+## Edit values marked "CHANGE ME" before first start. Docker Compose does NOT
+## expand ${VAR} in this file — NetBird reads it as literal YAML.
+
+server:
+  # Internal HTTP/gRPC listener inside the container. nginx-proxy-manager
+  # proxies https://netbird.mgsfoxhound.net -> http://127.0.0.1:8081 -> this port.
+  listenAddress: ":443"
+
+  # Public URL peers connect to. Must match what NPM serves.
+  exposedAddress: "https://netbird.mgsfoxhound.net:443"
+
+  # STUN listen ports (must match compose UDP port publish).
+  stunPorts:
+    - 3478
+
+  metricsPort: 9090
+  healthcheckAddress: ":9000"
+
+  logLevel: "info"
+  logFile: "console"
+
+  # TLS is terminated at NPM, so no cert here. Do NOT enable letsencrypt.
+  tls:
+    certFile: ""
+    keyFile: ""
+    letsencrypt:
+      enabled: false
+
+  # CHANGE ME — random secret for TURN-relay auth between server and peers.
+  # Generate: openssl rand -base64 32
+  authSecret: "REPLACE_WITH_RANDOM_RELAY_SECRET"
+
+  dataDir: "/var/lib/netbird/"
+
+  disableAnonymousMetrics: true
+  disableGeoliteUpdate: false
+
+  # Embedded IdP (Dex). Log in with the owner account created below on first
+  # boot, then add Authentik as a federated OIDC connector via the NetBird
+  # Dashboard UI: Settings -> Identity Providers.
+  auth:
+    issuer: "https://netbird.mgsfoxhound.net"
+    localAuthDisabled: false
+    signKeyRefreshEnabled: true
+
+    dashboardRedirectURIs:
+      - "https://netbird.mgsfoxhound.net/nb-auth"
+      - "https://netbird.mgsfoxhound.net/nb-silent-auth"
+    cliRedirectURIs:
+      - "http://localhost:53000/"
+    dashboardPostLogoutRedirectURIs:
+      - "https://netbird.mgsfoxhound.net/"
+
+    # CHANGE ME — initial local admin, created on first boot.
+    owner:
+      email: "admin@mgsfoxhound.net"
+      password: "REPLACE_WITH_STRONG_PASSWORD"
+
+  # PostgreSQL backend. DSN uses the `db` service name from compose.yaml and
+  # matches the credentials in .env.
+  # CHANGE ME — set password to match POSTGRES_PASSWORD in .env.
+  store:
+    engine: "postgres"
+    dsn: "host=db port=5432 user=netbird password=REPLACE_WITH_POSTGRES_PASSWORD dbname=netbird sslmode=disable"
+    # CHANGE ME — 32-byte base64 key used to encrypt data at rest.
+    # Generate: openssl rand -base64 32
+    encryptionKey: "REPLACE_WITH_STORE_ENCRYPTION_KEY"
+
+  # Same DSN reused for activity events and the embedded IdP.
+  activityStore:
+    engine: "postgres"
+    dsn: "host=db port=5432 user=netbird password=REPLACE_WITH_POSTGRES_PASSWORD dbname=netbird sslmode=disable"
+
+  authStore:
+    engine: "postgres"
+    dsn: "host=db port=5432 user=netbird password=REPLACE_WITH_POSTGRES_PASSWORD dbname=netbird sslmode=disable"
+
+  # NPM sits in front, so trust its address range for X-Forwarded-* headers.
+  # Adjust the CIDR if your NPM is on a different docker network.
+  reverseProxy:
+    trustedHTTPProxies:
+      - "172.16.0.0/12"
+      - "10.0.0.0/8"
+      - "192.168.0.0/16"

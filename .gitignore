@@ -1,0 +1,37 @@
+# Environment variables (contains sensitive data)
+.env
+
+# NetBird server configuration (contains secrets — copy from config.yaml.example)
+config.yaml
+
+# Docker volumes and data directories
+data/
+postgres/
+netbird/
+
+# Backups
+*.tar.gz
+*.zip
+*.backup
+*.bak
+*.sql
+*.dump
+
+# Logs
+*.log
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+tmp/
+temp/

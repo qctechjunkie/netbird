@@ -1,0 +1,55 @@
+networks:
+  netbird:
+    external: false
+
+services:
+  netbird:
+    image: netbirdio/netbird-server:${NETBIRD_TAG:-0.75.0}
+    container_name: netbird
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["--config", "/etc/netbird/config.yaml"]
+    volumes:
+      - ${DOCKER_DATA_PATH}/data:/var/lib/netbird
+      - ./config.yaml:/etc/netbird/config.yaml:ro
+    ports:
+      # HTTP/gRPC (management + signal + relay). Bound to 127.0.0.1 so that
+      # nginx-proxy-manager (on the same host) is the only public entrypoint
+      # for TCP traffic. Change the bind address if NPM is on another host.
+      - "127.0.0.1:${NETBIRD_HTTP_PORT:-8081}:443"
+      # STUN — MUST be publicly reachable (UDP), cannot be reverse-proxied.
+      - "${NETBIRD_STUN_PORT:-3478}:3478/udp"
+      # Metrics — localhost-only.
+      - "127.0.0.1:${NETBIRD_METRICS_PORT:-9090}:9090"
+    networks:
+      - netbird
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  db:
+    image: postgres:${POSTGRES_TAG:-17}
+    container_name: netbird-db
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-UTC}
+      POSTGRES_DB: ${POSTGRES_DB:-netbird}
+      POSTGRES_USER: ${POSTGRES_USER:-netbird}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?database password required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - netbird
+    volumes:
+      - ${DOCKER_DATA_PATH}/postgres:/var/lib/postgresql/data

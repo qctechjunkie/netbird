@@ -14,10 +14,11 @@ services:
       - ${DOCKER_DATA_PATH}/data:/var/lib/netbird
       - ./config.yaml:/etc/netbird/config.yaml:ro
     ports:
-      # HTTP/gRPC (management + signal + relay). Bound to 127.0.0.1 so that
-      # nginx-proxy-manager (on the same host) is the only public entrypoint
-      # for TCP traffic. Change the bind address if NPM is on another host.
-      - "127.0.0.1:${NETBIRD_HTTP_PORT:-8081}:443"
+      # HTTP/gRPC (management + signal + relay). Bound to the host's LAN IP so
+      # nginx-proxy-manager (on a different host) can reach it. Set
+      # NETBIRD_HTTP_BIND in .env to restrict which interface accepts traffic;
+      # keep it off 0.0.0.0 so this port isn't blanket-exposed.
+      - "${NETBIRD_HTTP_BIND:-127.0.0.1}:${NETBIRD_HTTP_PORT:-8081}:443"
       # STUN — MUST be publicly reachable (UDP), cannot be reverse-proxied.
       - "${NETBIRD_STUN_PORT:-3478}:3478/udp"
       # Metrics — localhost-only.

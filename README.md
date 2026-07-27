@@ -73,7 +73,11 @@ Compose-level knobs (paths, image tags, DB credentials, port mappings) live in `
 
 ### Ports
 
-- `NETBIRD_HTTP_PORT` (default `8081`) — bound to `127.0.0.1`, consumed by NPM.
+- `NETBIRD_HTTP_BIND` (default `127.0.0.1`) — interface `NETBIRD_HTTP_PORT` binds
+  to. Leave at `127.0.0.1` when NPM is on the same host; set to this host's LAN
+  IP (e.g. `192.168.1.142`) when NPM is on a different host on the LAN. Avoid
+  `0.0.0.0` — the port carries plain HTTP.
+- `NETBIRD_HTTP_PORT` (default `8081`) — HTTP/gRPC upstream consumed by NPM.
 - `NETBIRD_STUN_PORT` (default `3478`) — UDP, **must be publicly reachable**.
 - `NETBIRD_METRICS_PORT` (default `9090`) — Prometheus, localhost only.
 
@@ -84,14 +88,19 @@ NetBird speaks HTTP, gRPC, and WebSockets on the same backend port. NPM must pro
 1. In NPM, add a new **Proxy Host**:
    - Domain: `netbird.mgsfoxhound.net`
    - Scheme: `http`
-   - Forward hostname/IP: `127.0.0.1` (or the host's docker0 IP if NPM is in a different network)
+   - Forward hostname/IP: the value of `NETBIRD_HTTP_BIND`. When NPM is on the
+     same host, `127.0.0.1` works; when NPM is on a different host on the LAN
+     (e.g. NPM at `192.168.1.203`, NetBird at `192.168.1.142`), use the
+     NetBird host's LAN IP here and make sure `NETBIRD_HTTP_BIND` matches.
    - Forward port: `8081` (or whatever you set `NETBIRD_HTTP_PORT` to)
    - Enable **Block Common Exploits**
    - Enable **Websockets Support**
 
 2. In the **SSL** tab: request a Let's Encrypt cert, enable **HTTP/2 Support**, enable **Force SSL**.
 
-3. In the **Advanced** tab, paste the gRPC/WebSocket location blocks:
+3. In the **Advanced** tab, paste the gRPC/WebSocket location blocks. Replace
+   `127.0.0.1:8081` with `<NETBIRD_HTTP_BIND>:<NETBIRD_HTTP_PORT>` when NPM is
+   on a different host from NetBird (e.g. `192.168.1.142:8081`):
 
    ```nginx
    # gRPC — management API + signal exchange + relay authorization

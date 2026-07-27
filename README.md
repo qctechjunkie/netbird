@@ -4,9 +4,10 @@ Self-hosted [NetBird](https://netbird.io) mesh VPN using the combined `netbirdio
 
 Architecture:
 
-- **netbird** — single container running management, signal, relay, and STUN (combined image, v0.65.0+).
+- **netbird** — single container running management, signal, relay, and STUN (combined image, v0.65.0+). Backend only — does NOT serve the dashboard UI.
+- **dashboard** — separate `netbirdio/dashboard` container that serves the web SPA at `/`. Talks to `netbird` via the public URL, not the docker network.
 - **db** — PostgreSQL, backs NetBird's management store, activity events, and embedded IdP.
-- **nginx-proxy-manager** (external, in `../nginx-proxy-manager`) — terminates TLS, proxies HTTP/gRPC/WebSocket to the NetBird container on `127.0.0.1:8081`.
+- **nginx-proxy-manager** (external, in `../nginx-proxy-manager`) — terminates TLS. Routes API / gRPC / WebSocket paths to `netbird` on `NETBIRD_HTTP_PORT` (default `8081`) and everything else (`/`) to `dashboard` on `NETBIRD_DASHBOARD_PORT` (default `8082`).
 
 Peer login flow: log in to the embedded Dex IdP with the initial owner account, then federate to Authentik as an external OIDC provider via the Dashboard UI.
 
@@ -78,12 +79,13 @@ Compose-level knobs (paths, image tags, DB credentials, port mappings) live in `
   IP (e.g. `192.168.1.142`) when NPM is on a different host on the LAN. Avoid
   `0.0.0.0` — the port carries plain HTTP.
 - `NETBIRD_HTTP_PORT` (default `8081`) — HTTP/gRPC upstream consumed by NPM.
+- `NETBIRD_DASHBOARD_PORT` (default `8082`) — dashboard SPA upstream consumed by NPM's catch-all `/` route.
 - `NETBIRD_STUN_PORT` (default `3478`) — UDP, **must be publicly reachable**.
 - `NETBIRD_METRICS_PORT` (default `9090`) — Prometheus, localhost only.
 
 ## Nginx-Proxy-Manager
 
-NetBird speaks HTTP, gRPC, and WebSockets on the same backend port. NPM must proxy all three protocols.
+NPM proxies two upstreams for the same domain: the dashboard SPA at `/` (catch-all) and the backend for `/api/*`, `/oauth2/*`, `/relay`, `/ws-proxy/*`, and every `/*.gRPC*/` path.
 
 1. In NPM, add a new **Proxy Host**:
    - Domain: `netbird.mgsfoxhound.net`
@@ -92,17 +94,37 @@ NetBird speaks HTTP, gRPC, and WebSockets on the same backend port. NPM must pro
      same host, `127.0.0.1` works; when NPM is on a different host on the LAN
      (e.g. NPM at `192.168.1.203`, NetBird at `192.168.1.142`), use the
      NetBird host's LAN IP here and make sure `NETBIRD_HTTP_BIND` matches.
-   - Forward port: `8081` (or whatever you set `NETBIRD_HTTP_PORT` to)
+   - Forward port: `8082` (dashboard — this is the catch-all `/` upstream, NOT the backend). Backend paths are re-routed to `8081` via the Advanced tab below.
    - Enable **Block Common Exploits**
    - Enable **Websockets Support**
 
 2. In the **SSL** tab: request a Let's Encrypt cert, enable **HTTP/2 Support**, enable **Force SSL**.
 
-3. In the **Advanced** tab, paste the gRPC/WebSocket location blocks. Replace
-   `127.0.0.1:8081` with `<NETBIRD_HTTP_BIND>:<NETBIRD_HTTP_PORT>` when NPM is
-   on a different host from NetBird (e.g. `192.168.1.142:8081`):
+3. In the **Advanced** tab, paste the blocks below. These re-route every
+   backend path off the `/` catch-all (which points at the dashboard) and onto
+   the NetBird server. Replace `127.0.0.1:8081` with
+   `<NETBIRD_HTTP_BIND>:<NETBIRD_HTTP_PORT>` when NPM is on a different host
+   from NetBird (e.g. `192.168.1.142:8081`):
 
    ```nginx
+   # REST API
+   location /api/ {
+     proxy_pass http://127.0.0.1:8081;
+     proxy_http_version 1.1;
+     proxy_set_header Host $host;
+     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+     proxy_set_header X-Forwarded-Proto $scheme;
+   }
+
+   # Embedded Dex IdP (OAuth2 / OIDC endpoints and /.well-known)
+   location /oauth2/ {
+     proxy_pass http://127.0.0.1:8081;
+     proxy_http_version 1.1;
+     proxy_set_header Host $host;
+     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+     proxy_set_header X-Forwarded-Proto $scheme;
+   }
+
    # gRPC — management API + signal exchange + relay authorization
    location /management.ManagementService/ {
      grpc_pass grpc://127.0.0.1:8081;
@@ -136,7 +158,7 @@ NetBird speaks HTTP, gRPC, and WebSockets on the same backend port. NPM must pro
      proxy_send_timeout 1d;
    }
 
-   # WebSocket — dashboard silent-auth
+   # WebSocket — signal + management channels used by the dashboard
    location /ws-proxy/ {
      proxy_pass http://127.0.0.1:8081;
      proxy_http_version 1.1;

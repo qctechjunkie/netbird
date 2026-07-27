@@ -35,6 +35,34 @@ services:
       retries: 5
       start_period: 30s
 
+  dashboard:
+    image: netbirdio/dashboard:${NETBIRD_DASHBOARD_TAG:-latest}
+    container_name: netbird-dashboard
+    restart: unless-stopped
+    environment:
+      # REST + gRPC API endpoints — both point at the public NetBird URL, since
+      # NPM routes /api/* and /management.*/ to the netbird-server container.
+      NETBIRD_MGMT_API_ENDPOINT: ${NETBIRD_MGMT_API_ENDPOINT:?public NetBird URL required}
+      NETBIRD_MGMT_GRPC_API_ENDPOINT: ${NETBIRD_MGMT_API_ENDPOINT}
+      # Embedded Dex IdP — client ID/audience are fixed literals the server expects.
+      AUTH_AUDIENCE: netbird-dashboard
+      AUTH_CLIENT_ID: netbird-dashboard
+      AUTH_CLIENT_SECRET: ""
+      AUTH_AUTHORITY: ${NETBIRD_MGMT_API_ENDPOINT}/oauth2
+      USE_AUTH0: "false"
+      AUTH_SUPPORTED_SCOPES: "openid profile email groups"
+      AUTH_REDIRECT_URI: /nb-auth
+      AUTH_SILENT_REDIRECT_URI: /nb-silent-auth
+      # NPM terminates TLS, so disable the dashboard's built-in ACME.
+      NGINX_SSL_PORT: "443"
+      LETSENCRYPT_DOMAIN: "none"
+    ports:
+      # Dashboard SPA on plain HTTP for NPM to reverse-proxy. Same bind rules as
+      # the backend — LAN IP when NPM is on another host.
+      - "${NETBIRD_HTTP_BIND:-127.0.0.1}:${NETBIRD_DASHBOARD_PORT:-8082}:80"
+    networks:
+      - netbird
+
   db:
     image: postgres:${POSTGRES_TAG:-17}
     container_name: netbird-db

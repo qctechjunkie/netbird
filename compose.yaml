@@ -1,78 +1,41 @@
 services:
-  # ============================================================================
-  # NetBird Dashboard — Web SPA
-  # Serves the login/admin UI at NETBIRD_DASHBOARD_PORT. Talks to the backend
-  # via the public URL (NETBIRD_PUBLIC_URL), not the docker network.
-  # ============================================================================
+  # UI dashboard
   dashboard:
-    image: netbirdio/dashboard:${NETBIRD_DASHBOARD_TAG:-latest}
+    image: netbirdio/dashboard:latest
     container_name: netbird-dashboard
     restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      # Endpoints — dashboard talks to the backend at the public URL
-      NETBIRD_MGMT_API_ENDPOINT: ${NETBIRD_PUBLIC_URL:?NETBIRD_PUBLIC_URL must be set}
-      NETBIRD_MGMT_GRPC_API_ENDPOINT: ${NETBIRD_PUBLIC_URL:?NETBIRD_PUBLIC_URL must be set}
-      # OIDC — embedded Dex IdP (federate to Authentik from the dashboard UI)
-      AUTH_AUDIENCE: netbird-dashboard
-      AUTH_CLIENT_ID: netbird-dashboard
-      AUTH_CLIENT_SECRET: ""
-      AUTH_AUTHORITY: ${NETBIRD_PUBLIC_URL:?}/oauth2
-      USE_AUTH0: "false"
-      AUTH_SUPPORTED_SCOPES: "openid profile email groups"
-      AUTH_REDIRECT_URI: /nb-auth
-      AUTH_SILENT_REDIRECT_URI: /nb-silent-auth
-      # SSL — reverse proxy terminates TLS
-      NGINX_SSL_PORT: 443
-      LETSENCRYPT_DOMAIN: none
+    networks: [netbird]
     ports:
-      - "0.0.0.0:${NETBIRD_DASHBOARD_PORT:-8080}:80"
-    networks:
-      - netbird
+      - '0.0.0.0:8080:80'
+    env_file:
+      - ./dashboard.env
     logging:
       driver: "json-file"
       options:
         max-size: "500m"
         max-file: "2"
 
-  # ============================================================================
-  # NetBird Server — Combined Management + Signal + Relay + STUN
-  # Backend only. Store engine and encryption key come from env vars, which
-  # override the equivalent keys in config.yaml. `authSecret` is not currently
-  # overridable via env for the combined image — it stays in config.yaml.
-  # ============================================================================
+  # Combined server (Management + Signal + Relay + STUN)
   netbird-server:
-    image: netbirdio/netbird-server:${NETBIRD_TAG:-latest}
+    image: netbirdio/netbird-server:latest
     container_name: netbird-server
     restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      TZ: ${TZ:-UTC}
-      # Store — Postgres via env-var override; supersedes config.yaml
-      NETBIRD_STORE_CONFIG_ENGINE: postgres
-      NETBIRD_STORE_ENGINE_POSTGRES_DSN: "host=${NETBIRD_DB_HOST:-global-postgres} port=${NETBIRD_DB_PORT:-5432} user=${NETBIRD_DB_USER:?NETBIRD_DB_USER must be set} password=${NETBIRD_DB_PASSWORD:?NETBIRD_DB_PASSWORD must be set} dbname=${NETBIRD_DB:?NETBIRD_DB must be set} sslmode=disable"
-      NETBIRD_DATASTORE_ENC_KEY: ${NETBIRD_DATASTORE_ENC_KEY:?NETBIRD_DATASTORE_ENC_KEY must be set}
+    networks: [netbird]
     ports:
-      - "0.0.0.0:${NETBIRD_HTTP_PORT:-8081}:80"
-      - "0.0.0.0:${NETBIRD_STUN_PORT:-3478}:3478/udp"
+      - '0.0.0.0:8081:80'
+      - '3478:3478/udp'
     volumes:
-      - ${DOCKER_DATA_PATH}/data:/var/lib/netbird
-      - ./config.yaml:/etc/netbird/config.yaml:ro
+      - netbird_data:/var/lib/netbird
+      - ./config.yaml:/etc/netbird/config.yaml
     command: ["--config", "/etc/netbird/config.yaml"]
-    networks:
-      - netbird
-      - postgres-network
     logging:
       driver: "json-file"
       options:
         max-size: "500m"
         max-file: "2"
+
+volumes:
+  netbird_data:
 
 networks:
   netbird:
-    driver: bridge
-  postgres-network:
-    external: true
-    name: ${POSTGRES_NETWORK_NAME:?POSTGRES_NETWORK_NAME must be set}

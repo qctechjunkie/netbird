@@ -18,7 +18,7 @@ services:
     image: netbirdio/netbird-server:latest
     container_name: netbird-server
     restart: unless-stopped
-    networks: [netbird]
+    networks: [netbird, postgres-network]
     ports:
       - "0.0.0.0:8081:80"
       - "3478:3478/udp"
@@ -37,3 +37,6 @@ volumes:
 
 networks:
   netbird:
+  postgres-network:
+    external: true
+    name: ${POSTGRES_NETWORK_NAME:?POSTGRES_NETWORK_NAME must be set}

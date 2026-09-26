@@ -6,9 +6,7 @@ services:
     restart: unless-stopped
     networks: [netbird]
     ports:
-      - '0.0.0.0:8080:80'
-    env_file:
-      - ./dashboard.env
+      - "0.0.0.0:8080:80"
     logging:
       driver: "json-file"
       options:
@@ -22,11 +20,11 @@ services:
     restart: unless-stopped
     networks: [netbird]
     ports:
-      - '0.0.0.0:8081:80'
-      - '3478:3478/udp'
+      - "0.0.0.0:8081:80"
+      - "3478:3478/udp"
     volumes:
-      - netbird_data:/var/lib/netbird
-      - ./config.yaml:/etc/netbird/config.yaml
+      - ~${DOCKER_DATA_PATH}:/var/lib/netbird
+      - ${DOCKER_DATA_PATH}/config.yaml:/etc/netbird/config.yaml
     command: ["--config", "/etc/netbird/config.yaml"]
     logging:
       driver: "json-file"

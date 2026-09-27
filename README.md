@@ -11,7 +11,8 @@ Architecture:
 - **dashboard** — separate `netbirdio/dashboard` container that serves the web
   SPA at `/`. Talks to `netbird-server` via the public URL, not the docker network.
 - **global-postgres** (external, in `../global-postgres`) — shared PostgreSQL
-  instance. Provides the `netbird` database and `netbird_user` role.
+  instance. Provides the `netbird`, `netbird_activity`, and `netbird_idp`
+  databases, all owned by the `netbird_user` role.
 - **nginx-proxy-manager** (external, in `../nginx-proxy-manager`) — terminates
   TLS. Routes API / gRPC / WebSocket paths to `netbird-server` on
   `NETBIRD_HTTP_PORT` (default `8081`) and everything else (`/`) to `dashboard`
@@ -91,23 +92,31 @@ trust live in `config.yaml`. NetBird does NOT expand `${VAR}` inside
 ### What overrides what
 
 The netbird-server image applies configuration in this order (later beats
-earlier): defaults → `config.yaml` → env vars → CLI flags. The compose file
-sets:
+earlier): defaults → `config.yaml` → env vars → CLI flags. NetBird's own docs
+are inconsistent about whether `NETBIRD_STORE_ENGINE_POSTGRES_DSN` and
+`NETBIRD_DATASTORE_ENC_KEY` env vars are read directly by the running
+combined-image binary, or only by the `configure.sh` setup script. To avoid
+relying on that ambiguity, this stack does **not** pass store config via env
+vars at all — `config.yaml`'s `store`, `activityStore`, and `authStore`
+blocks are the single source of truth for Postgres connection details and
+the datastore encryption key.
 
-- `NETBIRD_STORE_CONFIG_ENGINE=postgres`
-- `NETBIRD_STORE_ENGINE_POSTGRES_DSN=host=...`
-- `NETBIRD_DATASTORE_ENC_KEY=...`
-
-so the `store` section in `config.yaml` is overridden — you don't need to
-touch it.
-
-`authSecret` currently has no env-var equivalent for the combined image, so
+`authSecret` has no env-var equivalent for the combined image either way, so
 it must be set in `config.yaml`.
+
+`.env`'s `NETBIRD_DB_*` variables are informational only (documenting what
+must match `config.yaml` and the `global-postgres` `.env`) — they are not
+read by `netbird-server`.
 
 ### Volume Paths
 
 - `DOCKER_DATA_PATH` — base directory on the host. Compose appends:
-  - `${DOCKER_DATA_PATH}/data` → `/var/lib/netbird` (server data, IdP DB, keys)
+  - `${DOCKER_DATA_PATH}/data` → `/var/lib/netbird` (server data, keys —
+    the embedded IdP DB and activity events also live here only if you
+    fall back to the default SQLite engines for those stores)
+  - `${DOCKER_DATA_PATH}/config.yaml` → `/etc/netbird/config.yaml`
+    (read-only mount; this file must exist at that exact path on the host —
+    copy/sync it there from this repo before starting the stack)
 
 PostgreSQL data lives in the separate `global-postgres` stack — not here.
 
@@ -136,27 +145,40 @@ netbird-server can reach `global-postgres` by service name.
 
 ## Provisioning the database
 
+This stack uses three separate Postgres databases, all owned by the same
+`netbird_user` role:
+
+- `netbird` — main management store (`server.store` in `config.yaml`)
+- `netbird_activity` — activity/audit log events (`server.activityStore`)
+- `netbird_idp` — embedded Dex IdP store (`server.authStore`)
+
 The `global-postgres` init script provisions databases on first boot from
-env vars. If your `global-postgres` is already running, you'll need to create
-the NetBird database and user by hand:
+env vars. If your `global-postgres` is already running (the common case),
+you'll need to create the databases and user by hand:
 
 ```bash
 docker exec -it global-postgres psql -U postgres <<SQL
 CREATE USER netbird_user WITH PASSWORD 'CHANGE_ME_MATCH_NETBIRD_DB_PASSWORD';
 CREATE DATABASE netbird OWNER netbird_user;
 GRANT ALL PRIVILEGES ON DATABASE netbird TO netbird_user;
+CREATE DATABASE netbird_activity OWNER netbird_user;
+GRANT ALL PRIVILEGES ON DATABASE netbird_activity TO netbird_user;
+CREATE DATABASE netbird_idp OWNER netbird_user;
+GRANT ALL PRIVILEGES ON DATABASE netbird_idp TO netbird_user;
 SQL
 ```
 
-Use the same password for `NETBIRD_DB_PASSWORD` in this stack's `.env` and
-for the psql command above.
+Use the same password for the `dsn` values in `config.yaml`'s `store`,
+`activityStore`, and `authStore` blocks (and for `NETBIRD_DB_PASSWORD` in
+this stack's `.env`, which is documentation-only — see
+[What overrides what](#what-overrides-what)) as for the psql command above.
 
-For future first-boot deployments of `global-postgres`, add the NetBird block
-to the global-postgres `.env` — the init script will provision it
-automatically:
+For future first-boot deployments of `global-postgres`, the NetBird block in
+the global-postgres `.env` provisions all three automatically via its
+comma-separated `_DB` list convention:
 
 ```env
-NETBIRD_DB=netbird
+NETBIRD_DB=netbird,netbird_activity,netbird_idp
 NETBIRD_DB_USER=netbird_user
 NETBIRD_DB_PASSWORD=changeme
 ```
@@ -174,7 +196,7 @@ single `netbird_data` volume):
 
    ```bash
    docker compose down
-   docker volume rm netbird_netbird_data
+   rm -rf ${DOCKER_DATA_PATH}/data
    ```
 
 3. Follow [Quick Start](#quick-start) with the new files.
@@ -303,19 +325,21 @@ before crossing a minor version.
 
 ### Backup
 
-The NetBird server keeps peer keys and the embedded IdP DB under
-`${DOCKER_DATA_PATH}/data`. The Postgres store lives in the `global-postgres`
-stack — back it up there.
+The NetBird server keeps peer keys under `${DOCKER_DATA_PATH}/data`. All
+three stores (management, activity, embedded IdP) live in the
+`global-postgres` stack — back them up there.
 
 ```bash
-# NetBird server data (peer keys, IdP DB, config)
+# NetBird server data (peer keys, config)
 docker compose down
 tar -czf netbird-data-$(date +%Y%m%d).tar.gz -C ${DOCKER_DATA_PATH} data
 docker compose up -d
 
-# Hot Postgres backup (no downtime)
-docker exec -T global-postgres pg_dump -U netbird_user netbird \
-  | gzip > netbird-db-$(date +%Y%m%d).sql.gz
+# Hot Postgres backup (no downtime) — all three databases
+for db in netbird netbird_activity netbird_idp; do
+  docker exec -T global-postgres pg_dump -U netbird_user "$db" \
+    | gzip > "netbird-db-${db}-$(date +%Y%m%d).sql.gz"
+done
 ```
 
 Also keep a copy of `.env` and `config.yaml` — they contain the encryption
@@ -339,19 +363,28 @@ owner or via Authentik), the peer appears in the dashboard.
 
 This stack is set up for [Komodo](https://komo.do) deployments:
 
-- The compose file uses `env_file: .env` plus a full `environment:` block, so
-  Komodo can either mount `.env` from disk or inject each variable via its
-  Variables UI.
-- `${VAR:?...}` fails fast if a required value isn't set — Komodo surfaces the
-  error immediately instead of starting a broken stack.
+- The `dashboard` service uses `env_file: .env`, so Komodo can either mount
+  `.env` from disk or inject each variable via its Variables UI.
+- The `netbird-server` service does **not** use `.env` for anything at
+  runtime — all of its secrets (store DSNs, encryption key, authSecret) live
+  in `config.yaml`, which must be present on disk and mounted read-only into
+  the container regardless of how Komodo manages `.env`.
+- `${VAR:?...}` (e.g. `POSTGRES_NETWORK_NAME`) fails fast if a required value
+  isn't set — Komodo surfaces the error immediately instead of starting a
+  broken stack.
 - `DOCKER_DATA_PATH` is the single knob for where NetBird's data lives on the
-  host; point it at the host path Komodo manages for this stack.
-- `config.yaml` still has to be present on disk (mounted read-only into the
-  container). Either commit a Komodo-managed template that has your public
-  URL / issuer / owner baked in, or generate it during the deploy hook.
+  host; point it at the host path Komodo manages for this stack, and ensure
+  `config.yaml` is synced to `${DOCKER_DATA_PATH}/config.yaml` before Komodo
+  starts the stack (Komodo's pre-deploy hook, or a file resource, works well
+  here).
+- Set `restart: unless-stopped` (already the default in `compose.yaml`) and
+  make sure Docker itself is enabled to start on boot on the host
+  (`systemctl enable docker`) — Komodo relies on the Docker daemon coming up
+  automatically after a reboot in order to bring the stack back with it.
 
 Import as a **Stack** in Komodo, wire up `.env` (or add each variable in the
-Variables tab), and deploy.
+Variables tab), make sure `config.yaml` lands on disk before deploy, and
+deploy.
 
 ## Security Notes
 
@@ -385,8 +418,16 @@ Variables tab), and deploy.
 - Confirm `global-postgres` is running: `docker ps | grep global-postgres`.
 - Confirm both stacks share the same network: `docker network ls | grep
   global-postgres-network` and `POSTGRES_NETWORK_NAME` in this `.env`.
-- Confirm `NETBIRD_DB_PASSWORD` matches the password on the `netbird_user`
-  role: `docker exec -it global-postgres psql -U netbird_user -d netbird -c '\q'`.
+- Confirm the `dsn` host in `config.yaml`'s `store`/`activityStore`/
+  `authStore` blocks is the Postgres **container name** (`global-postgres`),
+  not the network name (`global-postgres-network`) — these are easy to
+  confuse and only the container name resolves over the Docker network.
+- Confirm the password in each `dsn` matches the password on the
+  `netbird_user` role for all three databases:
+  `docker exec -it global-postgres psql -U netbird_user -d netbird -c '\q'`
+  (repeat with `-d netbird_activity` and `-d netbird_idp`).
+- `docker compose logs netbird-server` should show
+  `using Postgres store engine` after a successful connection.
 
 ### Dashboard loads but login page never appears
 

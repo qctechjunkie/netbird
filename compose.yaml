@@ -1,12 +1,14 @@
 services:
   # UI dashboard
   dashboard:
-    image: netbirdio/dashboard:latest
+    image: netbirdio/dashboard:${NETBIRD_DASHBOARD_TAG:-latest}
     container_name: netbird-dashboard
     restart: unless-stopped
+    env_file:
+      - .env
     networks: [netbird]
     ports:
-      - "0.0.0.0:8080:80"
+      - "0.0.0.0:${NETBIRD_DASHBOARD_PORT:-8080}:80"
     logging:
       driver: "json-file"
       options:
@@ -15,15 +17,15 @@ services:
 
   # Combined server (Management + Signal + Relay + STUN)
   netbird-server:
-    image: netbirdio/netbird-server:latest
+    image: netbirdio/netbird-server:${NETBIRD_TAG:-latest}
     container_name: netbird-server
     restart: unless-stopped
     networks: [netbird, postgres-network]
     ports:
-      - "0.0.0.0:8081:80"
-      - "3478:3478/udp"
+      - "0.0.0.0:${NETBIRD_HTTP_PORT:-8081}:80"
+      - "${NETBIRD_STUN_PORT:-3478}:3478/udp"
     volumes:
-      - ${DOCKER_DATA_PATH}:/var/lib/netbird
+      - ${DOCKER_DATA_PATH}/data:/var/lib/netbird
       - ${DOCKER_DATA_PATH}/config.yaml:/etc/netbird/config.yaml
     command: ["--config", "/etc/netbird/config.yaml"]
     logging:
@@ -31,9 +33,6 @@ services:
       options:
         max-size: "500m"
         max-file: "2"
-
-volumes:
-  netbird_data:
 
 networks:
   netbird:

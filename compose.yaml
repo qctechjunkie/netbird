@@ -4,7 +4,10 @@ services:
     image: netbirdio/dashboard:latest
     container_name: netbird-dashboard
     restart: unless-stopped
-    networks: [netbird, nginx-proxy-manager_default, global-postgres-network]
+    networks:
+      - netbird
+      - scoobydoo
+      - global-postgres-network
     ports:
       - "127.0.0.1:8080:80"
     logging:
@@ -18,7 +21,10 @@ services:
     image: netbirdio/netbird-server:latest
     container_name: netbird-server
     restart: unless-stopped
-    networks: [netbird, nginx-proxy-manager_default, global-postgres-network]
+    networks:
+      - netbird
+      - scoobydoo
+      - global-postgres-network
     ports:
       - "127.0.0.1:8081:80"
       - "3478:3478/udp"
@@ -34,7 +40,7 @@ services:
 
 networks:
   netbird:
-  nginx-proxy-manager_default:
+  scoobydoo:
     external: true
   global-postgres-network:
     external: true

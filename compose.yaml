@@ -4,6 +4,8 @@ services:
     image: netbirdio/dashboard:latest
     container_name: netbird-dashboard
     restart: unless-stopped
+    env_file:
+      - .env
     networks:
       - netbird
       - scoobydoo

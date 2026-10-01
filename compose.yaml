@@ -33,8 +33,6 @@ services:
     volumes:
       - ${DOCKER_DATA_PATH}/data:/var/lib/netbird
       - ${DOCKER_DATA_PATH}/config.yaml:/etc/netbird/config.yaml
-    environment:
-      - NB_STORE_ENGINE_POSTGRES_DSN=host=${PG_HOST} user=${PG_USER} password=${PG_PASSWORD} dbname=${PG_DB_NAME} port=${PG_PORT}
     command: ["--config", "/etc/netbird/config.yaml"]
     logging:
       driver: "json-file"
